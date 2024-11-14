@@ -1,103 +1,61 @@
-"""This module contains the function's business logic.
+import os
+from dotenv import load_dotenv
+from speckle_automate import AutomateBase, AutomationContext, execute_automate_function
+from ClashFunctions.element import getElement, pymeshLocation
+from ClashFunctions.clashDetect import clashDetection, storeResults
+from ClashFunctions.colorUpdate import updateColor
+from specklepy.api.client import SpeckleClient
 
-Use the automation_context module to wrap your function in an Automate context helper.
-"""
+# Load environment variables from .env
+load_dotenv()
 
-from pydantic import Field, SecretStr
-from speckle_automate import (
-    AutomateBase,
-    AutomationContext,
-    execute_automate_function,
-)
+# Retrieve secrets and settings from environment variables
+SPECKLE_TOKEN = os.getenv("SPECKLE_TOKEN")
+SPECKLE_SERVER_URL = os.getenv("SPECKLE_SERVER_URL")
+SPECKLE_PROJECT_ID = os.getenv("SPECKLE_PROJECT_ID")
+SPECKLE_AUTOMATION_ID = os.getenv("SPECKLE_AUTOMATION_ID")
 
-from flatten import flatten_base
-
+# Initialize Speckle client with the token and server URL
+client = SpeckleClient(host=SPECKLE_SERVER_URL)
+client.authenticate(SPECKLE_TOKEN)
 
 class FunctionInputs(AutomateBase):
-    """These are function author-defined values.
+    """Function inputs for Speckle automation."""
+    # Define additional inputs as needed, based on automation requirements
 
-    Automate will make sure to supply them matching the types specified here.
-    Please use the pydantic model schema to define your inputs:
-    https://docs.pydantic.dev/latest/usage/models/
-    """
+def automate_function(automate_context: AutomationContext, function_inputs: FunctionInputs) -> None:
+    """Main function to perform clash detection and handle Speckle automation."""
+    # Use the project ID as stream ID and specify branch name
+    stream_id = SPECKLE_PROJECT_ID
+    branch_name = "main"  # Adjust branch name as necessary
 
-    # An example of how to use secret values.
-    whisper_message: SecretStr = Field(title="This is a secret message")
-    forbidden_speckle_type: str = Field(
-        title="Forbidden speckle type",
-        description=(
-            "If a object has the following speckle_type,"
-            " it will be marked with an error."
-        ),
-    )
+    # Step 1: Retrieve element IDs
+    element_ids = getElement(client, stream_id, branch_name)
+    # Step 2: Retrieve PyMesh data for each element
+    element_data = pymeshLocation(client, stream_id, element_ids)
 
-
-def automate_function(
-    automate_context: AutomationContext,
-    function_inputs: FunctionInputs,
-) -> None:
-    """This is an example Speckle Automate function.
-
-    Args:
-        automate_context: A context-helper object that carries relevant information
-            about the runtime context of this function.
-            It gives access to the Speckle project data that triggered this run.
-            It also has convenient methods for attaching result data to the Speckle model.
-        function_inputs: An instance object matching the defined schema.
-    """
-    # The context provides a convenient way to receive the triggering version.
-    version_root_object = automate_context.receive_version()
-
-    objects_with_forbidden_speckle_type = [
-        b
-        for b in flatten_base(version_root_object)
-        if b.speckle_type == function_inputs.forbidden_speckle_type
-    ]
-    count = len(objects_with_forbidden_speckle_type)
-
-    if count > 0:
-        # This is how a run is marked with a failure cause.
+    # Step 3: Perform clash detect  ion
+    clash_data = clashDetection(element_data)
+    
+    if clash_data["clash_count"] > 0:
+        # Attach clash error details to the context
         automate_context.attach_error_to_objects(
-            category="Forbidden speckle_type"
-            f" ({function_inputs.forbidden_speckle_type})",
-            object_ids=[o.id for o in objects_with_forbidden_speckle_type if o.id],
-            message="This project should not contain the type: "
-            f"{function_inputs.forbidden_speckle_type}",
+            category="Clash Detection",
+            object_ids=[pair for pair in clash_data["clashes"]],
+            message="Detected clashes between elements.",
         )
-        automate_context.mark_run_failed(
-            "Automation failed: "
-            f"Found {count} object that have one of the forbidden speckle types: "
-            f"{function_inputs.forbidden_speckle_type}"
-        )
+        
+        # Store clash results in a file
+        storeResults(clash_data)
 
-        # Set the automation context view to the original model/version view
-        # to show the offending objects.
-        automate_context.set_context_view()
+        # Step 4: Update color of clashing elements to red
+        updateColor(client, stream_id, clash_data["clashes"], automate_context)
 
+        # Mark the automation run as failed due to detected clashes
+        automate_context.mark_run_failed(f"Automation failed: Found {clash_data['clash_count']} clashes.")
     else:
-        automate_context.mark_run_success("No forbidden types found.")
+        # Mark as successful if no clashes are detected
+        automate_context.mark_run_success("No clashes detected.")
 
-    # If the function generates file results, this is how it can be
-    # attached to the Speckle project/model
-    # automate_context.store_file_result("./report.pdf")
-
-
-def automate_function_without_inputs(automate_context: AutomationContext) -> None:
-    """A function example without inputs.
-
-    If your function does not need any input variables,
-     besides what the automation context provides,
-     the inputs argument can be omitted.
-    """
-    pass
-
-
-# make sure to call the function with the executor
 if __name__ == "__main__":
-    # NOTE: always pass in the automate function by its reference; do not invoke it!
-
-    # Pass in the function reference with the inputs schema to the executor.
     execute_automate_function(automate_function, FunctionInputs)
-
-    # If the function has no arguments, the executor can handle it like so
-    # execute_automate_function(automate_function_without_inputs)
