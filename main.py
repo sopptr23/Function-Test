@@ -7,8 +7,8 @@ from ClashFunctions.colorUpdate import updateColor
 def automate_function(automate_context: AutomationContext) -> None:
     """Main function to perform clash detection using Speckle Automate context."""
 
-    # Access the stream ID and the root object from the automation context
-    stream_id = automate_context.project.id
+    # Access the stream ID from the automation context
+    stream_id = automate_context.stream_id  # Use stream_id directly if available
     version_root_object = automate_context.receive_version()
 
     # Initialize the Speckle client using the token provided in the GitHub Secrets
