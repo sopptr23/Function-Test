@@ -5,7 +5,6 @@ function_inputs.json
 
 # Ignore the example environment file temporarily
 .env.example
-
 **/.env
 **/.envrc
 
